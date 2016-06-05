@@ -6,5 +6,6 @@
   :license "Specify license here"
   :serial t
   :components ((:file "package")
-               (:file "da-datasets")))
+               (:file "da-datasets")
+	       (:file "da-csv")))
 

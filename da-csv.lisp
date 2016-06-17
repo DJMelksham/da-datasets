@@ -2,22 +2,6 @@
 
 (in-package #:da-datasets)
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;
-;;; 1. Define dynamic variables that control delimited file operation
-;;;    and defaults for functions
-;;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(defvar *delimiter* #\,
-  "The delimiting character")
-(defvar *quote-char* #\"
-  "The character which designates the quoting character parsing delimited files")
-(defvar *newline-char* #\Newline
-  "The character that defines a new line when parsing csv files")
-(defvar *read-buffer-size* 1048576
-  "The size of the buffer arrays used by da-csv (in bytes) to slurp/buffer delimited files")
-
 (defclass delimited-object ()
   ((delimiter
     :initarg :delimiter
@@ -43,45 +27,16 @@
     :type 'fixnum
     :accessor read-buffer-size
     :documentation "Dimensions of the buffer used to slurp chunks of the file for processing")
-   (read-buffer
-    :initarg :read-buffer
-    :initform (make-string *read-buffer-size*)
-    :type 'string
-    :accessor read-buffer
-    :documentation "The buffer used to recieve slurped chunks of the delimited file for processing")
-   (position-in-buffer
-    :initarg :position-in-buffer
-    :initform 0
-    :type 'fixnum
-    :accessor position-in-buffer
-    :documentation "The buffer used to recieve slurped chunks of the delimited file for processing")
-   (buffer-end
-    :initarg :buffer-end
-    :initform *read-buffer-size*
-    :type 'fixnum
-    :accessor buffer-end
-    :documentation "If the buffer is not completely filled, this variable holds the first non-valid buffer index")
    (file-path
     :initarg :file-path
     :initform nil
     :accessor file-path
     :documentation "The path to the delimited file on disk")
-   (file-size
-    :initarg :file-size
-    :initform 0
-    :type 'fixnum
-    :accessor file-size
-    :documentation "The size of the delimited file")
    (delimiter-stream
     :initarg :delimiter-stream
     :initform nil
     :accessor delimiter-stream
     :documentation "A holding slot for any stream that may be needed from the delimited file")
-   (position-in-file
-    :initarg :position-in-file
-    :initform 0
-    :type 'fixnum
-    :documentation "The concept of the position of the stream within the delimted file")
    (num-rows
     :initarg :rows
     :initform nil
@@ -92,26 +47,21 @@
     :initform nil
     :accessor num-cols
     :documentation "If the number of columns in a csv is known/established, this slot holds that number")
-   (first-row-variables-p
+   (first-row-col-names-p
     :initarg :first-row-variables-p
     :initform nil
     :accessor first-row-variables-p
     :documentation "A predicate that determines whether the first row in the delimited file represents variable names")
-   (first-row-variables
-    :initarg :first-row-variables
-    :initform (make-array 0 :adjustable t :fill-pointer 0)
-    :accessor first-row-variables
+   (col-names
+    :initarg :col-names
+    :initform (make-array 0 :element-type 'string :adjustable t :fill-pointer 0)
+    :accessor col-names
     :documentation "If we need a specific place to hold a row of variable names, this slot will be that place.  Otherwise it is an empty, yet extendable array.")
    (confirmed-rectangular
     :initarg :confirmed-rectangular
     :initform nil
     :accessor confirmed-rectangular
-    :documentation "If the delimited file is believed to be rectangular in nature, that is to say, the same number of rows and columns, we can set this slot to T to indicate that fact.")
-   (confirmed-irregular
-    :initarg :confirmed-irregular
-    :initform nil
-    :accessor confirmed-irregular
-    :documentation "If the delimited file is believed to be irregular in nature, that is to say, that each row does not contain a similar number of variables, we can set this slot to T to indicate that fact.")))
+    :documentation "If the delimited file is believed to be rectangular in nature, that is to say, the same number of rows and columns, we can set this slot to T to indicate that fact.")))
 
 ;;; The csv finite state machine is the base level parser of csv files.
 ;;; It doesn't do anything except take in a character and transition
@@ -169,11 +119,11 @@
 (defun csv-fs-machine (state seen delimiter newline quote)
   "CSV Finite State Machine - reads chars and returns transitioned csv states - optimised to only take valid inputs"
   (declare (character seen delimiter newline quote)
-	   (fixnum state)
-	   (ftype (function (fixnum character character character character) fixnum) csv-fs-machine)
-	   (optimize (speed 3)(safety 1)(debug 0)(compilation-speed 0)))
+	   (type (integer 0 5) state)
+	   (ftype (function ((integer 0 5) character character character character) (integer 0 5)) csv-fs-machine)
+	   (optimize (speed 3)(safety 0)(debug 0)(compilation-speed 0)))
   
-  (the fixnum (cond ((eql state 1)
+  (the (integer 0 5) (cond ((eql state 1)
 		     (cond ((char= seen delimiter) 2)
 			   ((char= seen newline) 0)
 			   (t 1)))
@@ -208,17 +158,19 @@
 ;;; The buffers are mutated in place, but the calling code will have to establish exactly
 ;;; what to do with this cornucopia of information returned from the csv-buffer manipulator.
 
-(defun csv-buffer-manipulator (state char delimiter newline quote
+(declaim (inline csv-buffer-manipulator))
+
+(defun csv-buffer-manipulator (state char delimiter quote newline
 			       char-buff field-buff row-buff
 			       char-insert-index field-insert-index row-insert-index)
   "A function that understands how to manipulate chars read from a stateful csv stream, manipulate
-   the various buffers and incremebt buffer insertion points as needed.  Optimised to only take 
+   the various buffers and increment buffer insertion points as needed.  Optimised to assume only 
    valid inputs"
-  (declare (fixnum state char-insert-index field-insert-index row-insert-index)
+  (declare (integer state char-insert-index field-insert-index row-insert-index)
 	   (character char delimiter newline quote)
 	   (simple-string char-buff)
 	   (type (simple-array fixnum) field-buff row-buff)
-	   (optimize (speed 3)(safety 0)(debug 0)(compilation-speed 0)))
+	   (optimize (speed 3)(safety 1)(debug 0)(compilation-speed 0)))
   
   (let ((new-state (csv-fs-machine state char delimiter newline quote)))
     (declare (fixnum new-state))
@@ -241,6 +193,79 @@
 
     (values new-state char-insert-index field-insert-index row-insert-index)))
 
+(defun overflow? (row-buff char-buff-index row-buff-index)
+  (let ((row-buff-last-value (aref row-buff (- row-buff-index 1))))
+    (declare (optimize (debug 3)))
+
+    (if (eql row-buff-last-value char-buff-index)
+	nil
+	t)))
+
+(defun overflow-handover (char-buff char-buff-index
+			  field-buff field-buff-index
+			  row-buff row-buff-index)
+  
+  (let ((row-buff-last-value (aref row-buff (- row-buff-index 1)))
+	(new-char-buff-index 0)
+	(new-row-buff-index 1)
+	(new-field-buff-index 1))
+    (declare (optimize (debug 3)))
+
+    ;; Fill the char-buff from the end of itself, based upon the last
+    ;; value contained in the previous observation of (aref row-buff (- row-buff-index 1))
+    (loop for i from row-buff-last-value to char-buff-index
+       until (>= i char-buff-index)
+       for char = (aref char-buff i)
+       do (progn
+	    (setf (aref char-buff new-char-buff-index) char)
+	    (incf new-char-buff-index)))
+    
+    ;;set the valid field-buff values and new-field-buff-index
+    
+    (loop for field-cuts across field-buff
+       for i = 0 then (incf i)
+	 for j = 1
+       until (>= i field-buff-index)
+       do (if (> field-cuts row-buff-last-value)
+	      (progn
+		(setf (aref field-buff new-field-buff-index) (- field-cuts row-buff-last-value))
+		(incf new-field-buff-index))))
+
+    ;; First value of row-buff must always be zero and new-row-buff-index must always be one?
+
+    (setf (aref row-buff 0) 0)
+
+    (values new-char-buff-index
+	    new-field-buff-index
+	    new-row-buff-index)))
+
+(defun insufficient-buffer-size? (desired-rows-per-iteration
+				  row-buff-index)
+  (declare (optimize (debug 3)))
+  (if (< (- row-buff-index 1) desired-rows-per-iteration)
+      T
+      nil))
+
+(defun increase-buffer (new-buffer-size buffer)
+  (declare (optimize (debug 3)))
+  (let ((type-indicator (if (numberp (second (type-of buffer)))
+			    T
+			    (second (type-of buffer)))))
+  (loop
+     with new-char-buff = (make-array new-buffer-size :element-type type-indicator)
+     for char across buffer
+     for i = 0 then (incf i)
+     do (setf (aref new-char-buff i) char)
+     finally (return new-char-buff))))
+
+(defun increase-buffers (read-buff
+			 char-buff field-buff row-buff row-holder)
+  (declare (optimize (debug 3)))
+  (values (increase-buffer (ceiling (* (length read-buff) 1.5)) read-buff)
+	  (increase-buffer (* (length read-buff) 3) char-buff)
+	  (increase-buffer (* (length read-buff) 3) field-buff)
+	  (increase-buffer (* (length read-buff) 3) row-buff)
+	  (increase-buffer (* (length read-buff) 3) row-holder)))
 
 ;;;Quick test of the buffer-manipulator
 ;(let* ((string "cat,dog,person,what,#\Newline")

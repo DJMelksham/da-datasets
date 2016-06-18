@@ -113,7 +113,8 @@
        ;; beginning of the char-array.  Set other index values to take any such
        ;; insertions into account.
        ;; the read-sequence function should only read and append
-
+	
+	 
        do (if (overflow? row-buff char-buff-index row-buff-index) 
 	      (multiple-value-setq (char-buff-index
 				    field-buff-index
@@ -124,13 +125,16 @@
 	      (setf char-buff-index 0
 		    field-buff-index 1
 		    row-buff-index 1))
-
+       	 
+	 
        ;; We read in the char sequence from the file.  We're using char-buff-index
        ;; as the starting point because this will 'reasonably' reliably
        ;; allow us to compensate for remaining characters brought in from the previous
        ;; iteration.  We can harden it later.
        do (setf read-sequence-return (read-sequence read-buff stream))
        do (loop for char across read-buff
+	     for i = 0 then (incf i)
+	     until (= i read-sequence-return)
 	     do (multiple-value-setq (csv-state
 				     char-buff-index
 				     field-buff-index
@@ -147,7 +151,7 @@
 					 field-buff-index
 					 row-buff-index)))
 
-       do (incf i)
+       do (incf i) 
 
 ;; Extend the buffers if the size of them look like they might prove to be insufficient
        do (if (insufficient-buffer-size? 4 row-buff-index)
@@ -160,6 +164,9 @@
 				  char-buff
 				  field-buff
 				  row-buff
-				  row-holder))))
-	
-  (values (file-position stream) file-size i csv-state read-buff char-buff field-buff row-buff)))
+				  row-holder)))
+       )
+
+    
+  (values (file-position stream) file-size i csv-state)))
+

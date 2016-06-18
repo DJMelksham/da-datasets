@@ -215,9 +215,8 @@
     ;; value contained in the previous observation of (aref row-buff (- row-buff-index 1))
     (loop for i from row-buff-last-value to char-buff-index
        until (>= i char-buff-index)
-       for char = (aref char-buff i)
        do (progn
-	    (setf (aref char-buff new-char-buff-index) char)
+	    (setf (aref char-buff new-char-buff-index) (aref char-buff i))
 	    (incf new-char-buff-index)))
     
     ;;set the valid field-buff values and new-field-buff-index
@@ -260,12 +259,13 @@
 
 (defun increase-buffers (read-buff
 			 char-buff field-buff row-buff row-holder)
-  (declare (optimize (debug 3)))
-  (values (increase-buffer (ceiling (* (length read-buff) 1.5)) read-buff)
-	  (increase-buffer (* (length read-buff) 3) char-buff)
-	  (increase-buffer (* (length read-buff) 3) field-buff)
-	  (increase-buffer (* (length read-buff) 3) row-buff)
-	  (increase-buffer (* (length read-buff) 3) row-holder)))
+  (let ((new-read-buff-size (ceiling (* (length read-buff) 1.5))))
+    (declare (optimize (debug 3)))
+  (values (increase-buffer new-read-buff-size read-buff)
+	  (increase-buffer (* new-read-buff-size 3) char-buff)
+	  (increase-buffer (* new-read-buff-size 3) field-buff)
+	  (increase-buffer (* new-read-buff-size 3) row-buff)
+	  (increase-buffer (* new-read-buff-size 3) row-holder))))
 
 ;;;Quick test of the buffer-manipulator
 ;(let* ((string "cat,dog,person,what,#\Newline")

@@ -193,13 +193,19 @@
 
     (values new-state char-insert-index field-insert-index row-insert-index)))
 
+
+(declaim (inline overflow?))
 (defun overflow? (row-buff char-buff-index row-buff-index)
   (let ((row-buff-last-value (aref row-buff (- row-buff-index 1))))
-    (declare (optimize (debug 3)))
+    (declare (fixnum row-buff-last-value char-buff-index)
+	     (type (simple-array fixnum) row-buff)
+	     (optimize (speed 3)))
 
     (if (eql row-buff-last-value char-buff-index)
 	nil
 	t)))
+
+(declaim (inline overflow-handover))
 
 (defun overflow-handover (char-buff char-buff-index
 			  field-buff field-buff-index
@@ -209,7 +215,13 @@
 	(new-char-buff-index 0)
 	(new-row-buff-index 1)
 	(new-field-buff-index 1))
-    (declare (optimize (debug 3)))
+    (declare (optimize (speed 3))
+	     (fixnum char-buff-index field-buff-index row-buff-index
+		     new-char-buff-index new-field-buff-index new-row-buff-index
+		     row-buff-last-value)
+	     (type (simple-array character) char-buff)
+	     (type (simple-array fixnum) field-buff row-buff))
+		       
 
     ;; Fill the char-buff from the end of itself, based upon the last
     ;; value contained in the previous observation of (aref row-buff (- row-buff-index 1))
@@ -222,31 +234,32 @@
     ;;set the valid field-buff values and new-field-buff-index
     
     (loop for field-cuts across field-buff
-       for i = 0 then (incf i)
-	 for j = 1
+       for i = 0 then (incf (the fixnum i))
        until (>= i field-buff-index)
        do (if (> field-cuts row-buff-last-value)
 	      (progn
 		(setf (aref field-buff new-field-buff-index) (- field-cuts row-buff-last-value))
 		(incf new-field-buff-index))))
 
-    ;; First value of row-buff must always be zero and new-row-buff-index must always be one?
-
-    (setf (aref row-buff 0) 0)
-
     (values new-char-buff-index
 	    new-field-buff-index
 	    new-row-buff-index)))
 
+(declaim (inline insufficient-buffer-size?))
+
 (defun insufficient-buffer-size? (desired-rows-per-iteration
 				  row-buff-index)
-  (declare (optimize (debug 3)))
+  (declare (optimize (speed 3))
+	   (fixnum desired-rows-per-iteration row-buff-index))
   (if (< (- row-buff-index 1) desired-rows-per-iteration)
       T
       nil))
 
+(declaim (inline increase-buffer))
 (defun increase-buffer (new-buffer-size buffer)
-  (declare (optimize (debug 3)))
+  (declare (optimize (speed 3))
+	   (fixnum new-buffer-size)
+	   (array buffer))
   (let ((type-indicator (if (numberp (second (type-of buffer)))
 			    T
 			    (second (type-of buffer)))))
@@ -260,12 +273,15 @@
 (defun increase-buffers (read-buff
 			 char-buff field-buff row-buff row-holder)
   (let ((new-read-buff-size (ceiling (* (length read-buff) 1.5))))
-    (declare (optimize (debug 3)))
+    (declare (optimize (speed 3))
+	     (fixnum new-read-buff-size)
+	     (type (simple-array character) read-buff char-buff)
+	     (type (simple-array fixnum) field-buff row-buff))
   (values (increase-buffer new-read-buff-size read-buff)
-	  (increase-buffer (* new-read-buff-size 3) char-buff)
-	  (increase-buffer (* new-read-buff-size 3) field-buff)
-	  (increase-buffer (* new-read-buff-size 3) row-buff)
-	  (increase-buffer (* new-read-buff-size 3) row-holder))))
+	  (increase-buffer (the fixnum (* new-read-buff-size 3)) char-buff)
+	  (increase-buffer (the fixnum (* new-read-buff-size 3)) field-buff)
+	  (increase-buffer (the fixnum (* new-read-buff-size 3)) row-buff)
+	  (increase-buffer (the fixnum (* new-read-buff-size 3)) row-holder))))
 
 ;;;Quick test of the buffer-manipulator
 ;(let* ((string "cat,dog,person,what,#\Newline")

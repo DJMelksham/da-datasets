@@ -82,7 +82,8 @@
 			      (num-cols t)
 			      (rectangular-p t)
 			      (min-buffer-size t)
-			      (buffer-size *read-buffer-size*))
+			      (buffer-size *read-buffer-size*)
+			      (rows-per-buffer (* *cpu-count* *csv-rows-per-core*)))
   (let* ((col-names nil)
 	 (file-size (file-length stream))
 	 (nrows 0)
@@ -93,28 +94,28 @@
 	 (rectangular-p nil)
 	 (min-buffer-size buffer-size)
 	 (read-buff (make-array buffer-size :element-type 'character))
-	 (char-buff (make-array (* buffer-size 2) :element-type 'character))
-	 (field-buff (make-array (* buffer-size 2) :element-type 'fixnum))
-	 (row-buff (make-array (* buffer-size 2) :element-type 'fixnum))
-	 (row-holder (make-array (* buffer-size 2)))
-	 (rows-held 0)
+	 (char-buff (make-array (* buffer-size 3) :element-type 'character))
+	 (field-buff (make-array (* buffer-size 3) :element-type 'fixnum))
+	 (row-buff (make-array (* buffer-size 3) :element-type 'fixnum))
+	 (row-holder (make-array (* buffer-size 3) :initial-element #() :element-type 'array))
 	 (char-buff-index 0)
 	 (field-buff-index 1)
 	 (row-buff-index 1)
 	 (read-sequence-return 0)
-	 (i 0)
 	 (csv-state 0))
-    (declare (optimize (debug 3)))
+    (declare
+     (fixnum file-size char-buff-index field-buff-index row-buff-index
+	     read-sequence-return csv-state)
+     (type (simple-array character) read-buff char-buff)
+     (type (simple-array fixnum) field-buff row-buff)
+     (optimize (speed 3) (safety 1)))
     ;;; The big analysis section is actually rather complex.  Hold on to your hats...
-    (loop while (and
-		 (< i 1000000)
-		 (not (eql (file-position stream) file-size))) ;loop until we've read the whole file
+    (loop while (not (eql (the fixnum (file-position stream)) file-size)) ;loop until we've read the whole file
        ;; First, check for overflow from last round and insert any values from there into the
        ;; beginning of the char-array.  Set other index values to take any such
        ;; insertions into account.
        ;; the read-sequence function should only read and append
 	
-	 
        do (if (overflow? row-buff char-buff-index row-buff-index) 
 	      (multiple-value-setq (char-buff-index
 				    field-buff-index
@@ -133,8 +134,6 @@
        ;; iteration.  We can harden it later.
        do (setf read-sequence-return (read-sequence read-buff stream))
        do (loop for char across read-buff
-	     for i = 0 then (incf i)
-	     until (= i read-sequence-return)
 	     do (multiple-value-setq (csv-state
 				     char-buff-index
 				     field-buff-index
@@ -151,10 +150,9 @@
 					 field-buff-index
 					 row-buff-index)))
 
-       do (incf i) 
 
 ;; Extend the buffers if the size of them look like they might prove to be insufficient
-       do (if (insufficient-buffer-size? 4 row-buff-index)
+       do (if (insufficient-buffer-size? rows-per-buffer row-buff-index)
 	      (multiple-value-setq (read-buff
 				    char-buff
 				    field-buff
@@ -168,5 +166,33 @@
        )
 
     
-  (values (file-position stream) file-size i csv-state)))
+  (values (file-position stream) file-size csv-state)))
 
+(defun read-float (array)
+	       "Assumes [0-9]*.[0-9]*/[^0-9]"
+	       (let ((int-part1 0)
+		     (int-part2 0)
+		     (i 0)
+		     (k 0)
+		     (dec 0)
+		     (len (length array)))
+		 (declare (optimize (speed 3))
+			  (fixnum int-part1 int-part2 i k dec len)
+			  (type (simple-array character) array))
+		 (loop
+		    for ch = (aref array i)
+		    until (char= #\. ch)
+		    do (setf int-part1 (+ (the fixnum (* 10 int-part1))
+					  (the fixnum (digit-char-p ch))))
+		    do (incf i))
+		 (incf i)
+		 (setf k (- len (+ i 1)))
+		 (setf dec (+ k 1))
+		 (loop
+		    until (>= i len)  
+		    for digit = (the fixnum (digit-char-p (aref array i)))
+		    for order = (the fixnum (expt 10 k))
+		    do (incf int-part2 (the fixnum (the fixnum (* digit order))))
+		    do (decf k)
+		    do (incf i))
+		 (+ (float int-part1) (float (/ int-part2 (expt 10 dec))))))
